@@ -37,6 +37,22 @@ MAX_JUNK_LINES = 5
 # 30ms for jitter margin above the ~10ms measured floor.
 MIN_SAME_AXIS_INTERVAL_S = 0.03
 
+# IMPORTANT: this is NOT just a wall-clock budget. Measured on real hardware
+# that reading+parsing a previous response naturally takes ~60-80ms (longer
+# than MIN_SAME_AXIS_INTERVAL_S), so a naive "only sleep if elapsed time is
+# short" check computes a negative/zero remainder and skips sleep() entirely
+# -- and that FAILS 3/3, even though *more* wall-clock time had already
+# passed than the budget calls for. An explicit time.sleep(0.005) call
+# landing in that exact same measured gap SUCCEEDS 3/3. Same duration,
+# different outcome -- the only difference is whether an actual blocking
+# sleep() call executed. This points to something like the USB-RS485
+# adapter coalescing two write() calls into one burst (confusing its
+# auto TX/RX direction switching) when nothing forces a real yield between
+# them -- elapsed wall-clock time doesn't model this at all. So: always
+# call time.sleep() with a real nonzero duration before a same-axis command,
+# never skip it based on a computed "should already be fine" remainder.
+MIN_ABSOLUTE_SLEEP_S = 0.01
+
 
 class SidusAxis:
     """One axis (pan or tilt) on a shared serial connection."""
@@ -58,8 +74,9 @@ class SidusAxis:
         if self._last_send_time is None:
             return
         remaining = MIN_SAME_AXIS_INTERVAL_S - (time.monotonic() - self._last_send_time)
-        if remaining > 0:
-            time.sleep(remaining)
+        # Always sleep a real nonzero amount -- see MIN_ABSOLUTE_SLEEP_S comment above.
+        # Do NOT skip this even when `remaining` is already <= 0.
+        time.sleep(max(remaining, MIN_ABSOLUTE_SLEEP_S))
 
     def _read_response_frame(self, sent_frame: str) -> dict:
         """Read lines until one starts with this axis's header, skipping any

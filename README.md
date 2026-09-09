@@ -6,9 +6,12 @@ documented serial protocol directly (no vendor GUI needed).
 Status: reads and absolute moves (MML) confirmed working against real
 hardware (2026-09-09, unit S241530Q, node address A on both axes, COM7,
 9600 8N1). Soft-stop limits (MLF/MLB) are set and verified: pan ±45.00°,
-tilt ±24.96°/-24.96°. MMF/MMB (continuous-velocity move) and raising the
-baud rate have NOT been tested on real hardware yet — see "Open questions"
-below. Written against
+tilt ±24.96°/-24.96°. The same-axis pacing fix has gone through one
+round-trip of "worked in tests, failed on hardware, fixed again" — the
+current version (always-real-sleep) has NOT yet been re-verified against
+the physical unit; that's the next thing to confirm before trusting it.
+MMF/MMB (continuous-velocity move) and raising the baud rate have NOT been
+tested on real hardware yet — see "Open questions" below. Written against
 Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV),
 included in this repo at
 [`docs/sidus_user_manual_940250005-02.pdf`](docs/sidus_user_manual_940250005-02.pdf)
@@ -33,14 +36,30 @@ handled by the driver:
    (`DAK`=0002, "verbose acknowledgement") — expected behavior, not a framing
    bug. Handled by `_read_response_frame` in `driver.py`, which skips lines
    not starting with the axis's header character.
-2. **Same-axis command turnaround.** Two commands (read or write, any
-   combination) sent back-to-back to the *same* axis fail 100% of the time
-   at zero delay; any delay >= ~10ms succeeds 100% of the time (measured
-   over 25+ trials). This is per-axis, not a shared bus pause — pan→tilt
-   needs no delay even at 0.00s. Handled by `MIN_SAME_AXIS_INTERVAL_S`
-   (30ms, budgeted above the ~10ms floor) in `driver.py`. This is likely
-   also why the vendor GUI wasn't applying the safety limits — it probably
-   issues writes back-to-back with no pause.
+2. **Same-axis command turnaround — and it's not a wall-clock budget.** Two
+   commands (read or write, any combination) sent back-to-back to the *same*
+   axis fail 100% of the time at zero delay; any delay >= ~10ms succeeds
+   100% of the time. This is per-axis, not a shared bus pause — pan→tilt
+   needs no delay even at 0.00s. This is likely also why the vendor GUI
+   wasn't applying the safety limits — it probably issues writes
+   back-to-back with no pause.
+
+   The first version of the fix computed `remaining = budget - elapsed` and
+   skipped `time.sleep()` when `remaining <= 0`. That failed on real
+   hardware: reading+parsing a response naturally takes ~60-80ms (already
+   more than the 30ms budget), so `remaining` was already negative before
+   the next same-axis command — and skipping the sleep in that case failed
+   100% of the time, *even though more wall-clock time had already passed
+   than the budget called for*. An explicit `time.sleep(0.005)` call in
+   that exact same measured gap succeeded 100% of the time. Same duration,
+   different outcome — the only difference is whether an actual blocking
+   `sleep()` call executed. This points to something like the USB-RS485
+   adapter coalescing two `write()` calls into one burst (confusing its
+   auto TX/RX direction switching) when nothing forces a real yield between
+   them. So the fix (`_wait_for_same_axis_turnaround` in `driver.py`) always
+   calls `time.sleep()` with a real nonzero duration before a same-axis
+   command — it never skips the call based on a computed "should already be
+   fine" remainder.
 3. **MML's second response uses a widened data field.** Per the manual, MML
    (move to position) returns two responses: an ack, then a settled-position
    frame in MRL format. On real hardware that second frame uses a 6-digit
@@ -50,6 +69,18 @@ handled by the driver:
    e.g. -434.75° for a real position of 38.24°). `parse_response()` is now
    variable-width: it peels the terminator off the end and treats everything
    between the command and terminator as the data field, whatever its width.
+
+**Lesson from this one, worth remembering:** the original mocked test for
+this passed cleanly, because a mocked serial connection responds instantly
+— it never reproduces the ~60-80ms real response-parsing delay that
+triggered the bug. This is the second time in this project a fix looked
+correct against mocks but broke on real timing/multi-line hardware behavior
+(the first was the verbose-ack label line above). Tests here now assert on
+*mechanism* (e.g. "was `sleep()` actually called with a nonzero value")
+rather than only on *timing outcomes*, specifically to catch this class of
+bug — but it's a good reminder that this driver's mocked tests can't fully
+substitute for hardware testing, only reduce how often hardware testing is
+needed.
 
 The unit's firmware (via `MRA` on the tilt axis) reports as **SS250 Mark
 IV-AE, firmware 906000904 A1.2** — a materially different, alphanumeric
