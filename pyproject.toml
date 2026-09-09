@@ -1,0 +1,18 @@
+[project]
+name = "sidus-driver"
+version = "0.1.0"
+description = "Minimal Python driver for Sidus SS250-series pan/tilt units"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sidus_driver*"]
