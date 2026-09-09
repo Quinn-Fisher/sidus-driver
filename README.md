@@ -3,7 +3,10 @@
 Minimal Python driver for a Sidus Solutions SS250-series pan/tilt unit, talking the
 documented serial protocol directly (no vendor GUI needed).
 
-Status: exploratory / not yet run against real hardware. Written against
+Status: reads confirmed working against real hardware (2026-09-09, unit
+S241530Q, node address A on both axes, COM7, 9600 8N1). No write/move
+commands (MML/MMF/MMB/MST/MLF/MLB) have been sent to the physical unit yet —
+only the read-only MRL command has been tested. Written against
 Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV),
 included in this repo at
 [`docs/sidus_user_manual_940250005-02.pdf`](docs/sidus_user_manual_940250005-02.pdf)
@@ -17,10 +20,16 @@ an 85m cable runs from an 8-pin Subconn (wet end, at the unit) to a DB-9 (dry
 end, topside) — a standard serial connector, so a plain USB-to-serial (DB-9)
 adapter should be enough to connect a computer.
 
-First real step with the hardware should still be running
-`scripts/read_position.py` and checking it gets a sane response, since the
-protocol has only been checked against the manual's own worked examples, not
-the physical unit yet.
+## Known hardware quirk
+
+The real unit prepends a plain-text label line before every response frame
+(e.g. `location\r\n#AMRL5412R\r\n` for an MRL read), not just the documented
+12-byte frame. This lines up with the manual's own examples for the
+factory-default acknowledgement mode (`DAK`=0002, "verbose acknowledgement")
+showing a label before the real frame — likely expected behavior, not a
+framing bug. The driver handles this: it skips lines that don't start with
+the axis's header character before parsing. See `_read_response_frame` in
+`driver.py`.
 
 ## What's here
 

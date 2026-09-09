@@ -24,6 +24,7 @@ from . import protocol
 
 DEFAULT_BAUD = 9600  # manual's factory default; confirm against your unit
 RESPONSE_TIMEOUT_S = 1.0
+MAX_JUNK_LINES = 5
 
 
 class SidusAxis:
@@ -37,13 +38,31 @@ class SidusAxis:
     def _send(self, command: str, data: int, terminator: str, expected_responses: int = 1) -> list[dict]:
         frame = protocol.build_command(self._header, self._addr, command, data, terminator)
         self._conn.write(frame.encode("ascii"))
-        responses = []
-        for _ in range(expected_responses):
+        return [self._read_response_frame(frame) for _ in range(expected_responses)]
+
+    def _read_response_frame(self, sent_frame: str) -> dict:
+        """Read lines until one starts with this axis's header, skipping any
+        human-readable label lines the unit sends first.
+
+        Observed on real SS250 MK4 hardware: MRL reads come back as e.g.
+        b"location\\r\\n#AMRL5412R\\r\\n" — a plain-text label line ahead of the
+        documented 12-byte frame. This matches the manual's own examples for
+        the factory-default acknowledgement mode (DAK=0002, "verbose
+        acknowledgement", section 4.4.2), which show a label line before the
+        real response frame (e.g. "device baud" before "$ADBD0096R"). So this
+        is very likely documented behavior, not a framing artifact — but
+        skipping non-matching lines is safe either way.
+        """
+        for _ in range(MAX_JUNK_LINES):
             line = self._conn.readline()
             if not line:
-                raise TimeoutError(f"no response to {frame.strip()!r}")
-            responses.append(protocol.parse_response(line))
-        return responses
+                raise TimeoutError(f"no response to {sent_frame.strip()!r}")
+            if line[:1] == self._header.encode("ascii"):
+                return protocol.parse_response(line)
+        raise TimeoutError(
+            f"no line starting with {self._header!r} after skipping {MAX_JUNK_LINES} lines "
+            f"(sent {sent_frame.strip()!r})"
+        )
 
     # --- position -------------------------------------------------------
 
