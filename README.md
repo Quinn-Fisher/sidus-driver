@@ -4,7 +4,10 @@ Minimal Python driver for a Sidus Solutions SS250-series pan/tilt unit, talking 
 documented serial protocol directly (no vendor GUI needed).
 
 Status: exploratory / not yet run against real hardware. Written against
-Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV).
+Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV),
+included in this repo at
+[`docs/sidus_user_manual_940250005-02.pdf`](docs/sidus_user_manual_940250005-02.pdf)
+— the serial command protocol is documented in section 4.4.
 
 Confirmed via the Sidus order (S241530Q): our unit is an **SS250 PT 24VDC,
 MK4**, RS485, aluminum housing, 3km depth rating, with factory hard stops of
