@@ -3,13 +3,21 @@
 Minimal Python driver for a Sidus Solutions SS250-series pan/tilt unit, talking the
 documented serial protocol directly (no vendor GUI needed).
 
-Status: exploratory / not yet verified against real hardware. Written against
+Status: exploratory / not yet run against real hardware. Written against
 Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV).
-Our physical unit may be the newer SS250MKV — the MKV spec sheet claims
-"legacy-compatible" serial control but does not publish its own command list,
-so this has NOT been confirmed to work on MKV yet. First real step with the
-hardware should be running `scripts/read_position.py` and checking it gets a
-sane response before trusting anything else here.
+
+Confirmed via the Sidus order (S241530Q): our unit is an **SS250 PT 24VDC,
+MK4**, RS485, aluminum housing, 3km depth rating, with factory hard stops of
+Pan ±170° / Tilt ±90°. So this driver's protocol assumptions are the right
+ones — no mkV ambiguity. Connector chain: unit has an 8-pin Subconn MCBH-8M;
+an 85m cable runs from an 8-pin Subconn (wet end, at the unit) to a DB-9 (dry
+end, topside) — a standard serial connector, so a plain USB-to-serial (DB-9)
+adapter should be enough to connect a computer.
+
+First real step with the hardware should still be running
+`scripts/read_position.py` and checking it gets a sane response, since the
+protocol has only been checked against the manual's own worked examples, not
+the physical unit yet.
 
 ## What's here
 
@@ -49,7 +57,11 @@ pip install -e ".[dev]"
 ## Setting the pan/tilt safety limits
 
 Cable slack limits how far the unit can safely pan/tilt without straining the
-cable. Current known-safe limits: pan ±45°, tilt ±25°.
+cable. Current known-safe limits: pan ±45°, tilt ±25° — these are *soft*
+stops we set in software (`MLF`/`MLB`), well inside the unit's factory
+*hard* stops (mechanical, Pan ±170° / Tilt ±90°). The hard stops exist as a
+backup in case the soft stops aren't set or fail; they're not a substitute
+for setting the soft limits correctly.
 
 ```
 # stop the toolkit / anything else talking to the sonar rig first

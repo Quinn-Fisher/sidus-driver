@@ -3,9 +3,9 @@ Minimal driver for a Sidus SS250-series pan/tilt over RS232/RS485.
 
 This wraps the command set documented in Sidus Solutions User Manual
 Doc 940250005 Rev 14, section 4.4.2 ("Command Mnemonics for SS250mkII and
-SS250mkIII series"). It has NOT been confirmed against an SS250mkV unit —
-the mkV spec sheet claims "legacy-compatible" control but does not include
-the command list. Verify against real hardware before trusting this on mkV.
+SS250mkIII series"). Confirmed via the Sidus order (S241530Q) that our unit
+is an SS250 MK4, RS485 — the right series for this manual, no mkV ambiguity.
+This has not yet been run against the physical unit, though.
 
 Node addresses (the single ASCII character identifying pan vs. tilt on the
 wire) are NOT hardcoded — the factory default is "A" for both axes on
