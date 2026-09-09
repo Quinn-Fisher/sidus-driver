@@ -26,6 +26,17 @@ DEFAULT_BAUD = 9600  # manual's factory default; confirm against your unit
 RESPONSE_TIMEOUT_S = 1.0
 MAX_JUNK_LINES = 5
 
+# Same-axis turnaround delay. Measured on real hardware (SS250 MK4, unit
+# S241530Q): back-to-back commands to the SAME axis (read or write, any
+# combination) fail 100% of the time at 0.00s and succeed 100% of the time
+# at every tested delay from 0.01s up. Commands to DIFFERENT axes (pan then
+# tilt) need no delay at all, even at 0.00s — this is per-axis, not a
+# global bus pause. The floor looked like a binary threshold rather than a
+# gradual falloff, suggesting a write-ordering/scheduling race in the
+# USB-serial adapter path rather than RS485 wire settle time. Budgeting
+# 30ms for jitter margin above the ~10ms measured floor.
+MIN_SAME_AXIS_INTERVAL_S = 0.03
+
 
 class SidusAxis:
     """One axis (pan or tilt) on a shared serial connection."""
@@ -34,11 +45,21 @@ class SidusAxis:
         self._conn = conn
         self._header = header
         self._addr = addr
+        self._last_send_time: float | None = None
 
     def _send(self, command: str, data: int, terminator: str, expected_responses: int = 1) -> list[dict]:
+        self._wait_for_same_axis_turnaround()
         frame = protocol.build_command(self._header, self._addr, command, data, terminator)
         self._conn.write(frame.encode("ascii"))
+        self._last_send_time = time.monotonic()
         return [self._read_response_frame(frame) for _ in range(expected_responses)]
+
+    def _wait_for_same_axis_turnaround(self) -> None:
+        if self._last_send_time is None:
+            return
+        remaining = MIN_SAME_AXIS_INTERVAL_S - (time.monotonic() - self._last_send_time)
+        if remaining > 0:
+            time.sleep(remaining)
 
     def _read_response_frame(self, sent_frame: str) -> dict:
         """Read lines until one starts with this axis's header, skipping any

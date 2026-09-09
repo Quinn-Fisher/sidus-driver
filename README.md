@@ -3,10 +3,12 @@
 Minimal Python driver for a Sidus Solutions SS250-series pan/tilt unit, talking the
 documented serial protocol directly (no vendor GUI needed).
 
-Status: reads confirmed working against real hardware (2026-09-09, unit
-S241530Q, node address A on both axes, COM7, 9600 8N1). No write/move
-commands (MML/MMF/MMB/MST/MLF/MLB) have been sent to the physical unit yet —
-only the read-only MRL command has been tested. Written against
+Status: reads and absolute moves (MML) confirmed working against real
+hardware (2026-09-09, unit S241530Q, node address A on both axes, COM7,
+9600 8N1). Soft-stop limits (MLF/MLB) are set and verified: pan ±45.00°,
+tilt ±24.96°/-24.96°. MMF/MMB (continuous-velocity move) and raising the
+baud rate have NOT been tested on real hardware yet — see "Open questions"
+below. Written against
 Sidus Solutions User Manual Doc 940250005 Rev 14 (covers SS250mkII/mkIII/mkIV),
 included in this repo at
 [`docs/sidus_user_manual_940250005-02.pdf`](docs/sidus_user_manual_940250005-02.pdf)
@@ -20,16 +22,62 @@ an 85m cable runs from an 8-pin Subconn (wet end, at the unit) to a DB-9 (dry
 end, topside) — a standard serial connector, so a plain USB-to-serial (DB-9)
 adapter should be enough to connect a computer.
 
-## Known hardware quirk
+## Known hardware quirks
 
-The real unit prepends a plain-text label line before every response frame
-(e.g. `location\r\n#AMRL5412R\r\n` for an MRL read), not just the documented
-12-byte frame. This lines up with the manual's own examples for the
-factory-default acknowledgement mode (`DAK`=0002, "verbose acknowledgement")
-showing a label before the real frame — likely expected behavior, not a
-framing bug. The driver handles this: it skips lines that don't start with
-the axis's header character before parsing. See `_read_response_frame` in
-`driver.py`.
+Found through live testing on the real unit (SS250 MK4, S241530Q), all now
+handled by the driver:
+
+1. **Verbose acknowledgement label lines.** Every response is preceded by a
+   plain-text label line (e.g. `location\r\n#AMRL5412R\r\n` for an MRL read).
+   Matches the manual's documented factory-default acknowledgement mode
+   (`DAK`=0002, "verbose acknowledgement") — expected behavior, not a framing
+   bug. Handled by `_read_response_frame` in `driver.py`, which skips lines
+   not starting with the axis's header character.
+2. **Same-axis command turnaround.** Two commands (read or write, any
+   combination) sent back-to-back to the *same* axis fail 100% of the time
+   at zero delay; any delay >= ~10ms succeeds 100% of the time (measured
+   over 25+ trials). This is per-axis, not a shared bus pause — pan→tilt
+   needs no delay even at 0.00s. Handled by `MIN_SAME_AXIS_INTERVAL_S`
+   (30ms, budgeted above the ~10ms floor) in `driver.py`. This is likely
+   also why the vendor GUI wasn't applying the safety limits — it probably
+   issues writes back-to-back with no pause.
+3. **MML's second response uses a widened data field.** Per the manual, MML
+   (move to position) returns two responses: an ack, then a settled-position
+   frame in MRL format. On real hardware that second frame uses a 6-digit
+   zero-padded data field (e.g. `#AMRL005435R`), not the manual's documented
+   4-digit width. The old fixed-offset parser silently mis-sliced this
+   (no exception — the frame passed the length check but decoded to garbage,
+   e.g. -434.75° for a real position of 38.24°). `parse_response()` is now
+   variable-width: it peels the terminator off the end and treats everything
+   between the command and terminator as the data field, whatever its width.
+
+The unit's firmware (via `MRA` on the tilt axis) reports as **SS250 Mark
+IV-AE, firmware 906000904 A1.2** — a materially different, alphanumeric
+version scheme from the manual's own worked example (a Mark II unit,
+firmware `6618`). That, plus these three undocumented quirks found in one
+session, suggests we're on a firmware/hardware revision the manual wasn't
+written against. Worth requesting a MK IV-AE-specific protocol addendum from
+Sidus rather than continuing to reverse-engineer quirks one at a time.
+
+## Open questions (flagged, not yet tested on real hardware)
+
+- **Baud rate.** Raising `DBD` (currently 9600, supports up to 115200) might
+  reduce or eliminate the same-axis turnaround delay if it's wire-turnaround
+  dominated rather than USB-adapter-scheduling dominated — but changing live
+  comms parameters on hardware at the end of an 85m tether risks losing
+  communication if something doesn't match afterward. Needs explicit
+  sign-off before testing.
+- **MMF/MMB (continuous-velocity move).** Not yet tested — these only stop
+  via an explicit `MST`, hitting a soft limit, or a 0000-speed command, and
+  we haven't independently verified the soft limits actually arrest a
+  continuous move (only absolute MML moves, which have a built-in target,
+  have been tested). Also unconfirmed whether MMF/MMB's response has the
+  same widened-field quirk as MML's second response.
+- **Pan-axis `MRA` anomaly.** The tilt axis returns the full descriptive
+  `MRA` block; the pan axis only ever returns a short ack line (serial
+  number only), reproduced 3 times including on a freshly-opened, generously
+  settled connection. Not yet explained — may indicate pan and tilt boards
+  differ, or may be worth asking Sidus about directly.
 
 ## What's here
 

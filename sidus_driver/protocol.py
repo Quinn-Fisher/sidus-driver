@@ -4,11 +4,13 @@ Wire-level encoding for the Sidus Solutions serial protocol.
 Reference: Sidus Solutions User Manual, Doc 940250005 Rev 14 (SS250mkII/mkIII/mkIV),
 section 4.4 "Sidus Solutions Protocol" and Appendix 1 "Position Calculation".
 
-Frame format (12 bytes total):
+Frame format (12 bytes total, for commands we send):
     HEADER(1) ADDR(1) COMMAND(3) DATA(4) TERMINATOR(1: R or W) <CR><LF>
 
 Header identifies the axis: "#" = pan, "$" = tilt.
-Data is always 4 ASCII digits, zero-padded, in the range 0000-9999.
+Outgoing data is always 4 ASCII digits, zero-padded, in the range 0000-9999
+(the manual's documented format). Incoming data is NOT always 4 digits —
+see parse_response() for a real-hardware exception to this.
 
 Position encoder scale: 0.0879 degrees/count, with 5000 counts = 0 degrees.
 This conversion applies to MRL on all series. mkIV/mkV also support MAL, which
@@ -53,15 +55,27 @@ def build_command(header: str, addr: str, command: str, data: int, terminator: s
 
 
 def parse_response(raw: bytes) -> dict:
-    """Split a raw echoed line into its components. Raises on malformed frames."""
+    """Split a raw echoed line into its components. Raises on malformed frames.
+
+    The data field is NOT assumed to be a fixed 4 characters — real hardware
+    (SS250 MK4, unit S241530Q) sends MML's second ("settled position")
+    response with a 6-digit zero-padded data field (e.g. "#AMRL005435R"),
+    not the 4-digit field the manual's own worked examples show. A fixed
+    text[5:9]/text[9] slice silently mis-parses that case instead of raising.
+    So: peel header/addr/command off the front and terminator off the back,
+    and treat everything in between as the data field, whatever its width.
+    """
     text = raw.decode("ascii", errors="replace").strip("\r\n")
-    if len(text) < 10:
+    if len(text) < 7:  # header(1) + addr(1) + command(3) + data(>=1) + terminator(1)
         raise ValueError(f"response too short: {raw!r}")
+    terminator = text[-1]
+    if terminator not in ("R", "W"):
+        raise ValueError(f"unexpected terminator {terminator!r} in response {raw!r}")
     return {
         "header": text[0],
         "addr": text[1],
         "command": text[2:5],
-        "data": text[5:9],
-        "terminator": text[9],
+        "data": text[5:-1],
+        "terminator": terminator,
         "raw": text,
     }

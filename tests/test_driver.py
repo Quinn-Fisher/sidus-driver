@@ -7,10 +7,12 @@ before the documented 12-byte frame. See driver.py's _read_response_frame
 docstring for why (factory-default verbose acknowledgement mode).
 """
 
+import time
+
 import pytest
 
 from sidus_driver import protocol
-from sidus_driver.driver import SidusAxis
+from sidus_driver.driver import MIN_SAME_AXIS_INTERVAL_S, SidusAxis
 
 
 class FakeSerial:
@@ -27,6 +29,20 @@ class FakeSerial:
         if self._lines:
             return self._lines.pop(0)
         return b""
+
+
+class RepeatingFakeSerial:
+    """Like FakeSerial, but replays the same line forever (for pacing tests)."""
+
+    def __init__(self, line: bytes):
+        self._line = line
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+    def readline(self) -> bytes:
+        return self._line
 
 
 def test_read_location_skips_leading_label_line():
@@ -64,3 +80,32 @@ def test_gives_up_after_too_many_non_matching_lines():
 
     with pytest.raises(TimeoutError):
         axis.read_location_degrees()
+
+
+def test_same_axis_back_to_back_commands_are_paced():
+    # Real hardware (unit S241530Q): back-to-back commands to the SAME axis
+    # fail 100% of the time with zero delay, succeed 100% of the time at any
+    # nonzero delay >= ~10ms. We budget MIN_SAME_AXIS_INTERVAL_S (30ms).
+    conn = RepeatingFakeSerial(b"#AMRL5000R\r\n")
+    axis = SidusAxis(conn, protocol.PAN_HEADER, "A")
+    axis.read_location_degrees()  # first call: nothing to wait on yet
+
+    start = time.monotonic()
+    axis.read_location_degrees()
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= MIN_SAME_AXIS_INTERVAL_S - 0.005  # small tolerance for scheduling jitter
+
+
+def test_different_axes_do_not_wait_on_each_other():
+    # Real hardware: pan->tilt (or tilt->pan) succeeds reliably even at zero
+    # delay — the turnaround requirement is per-axis, not a shared bus pause.
+    pan = SidusAxis(RepeatingFakeSerial(b"#AMRL5000R\r\n"), protocol.PAN_HEADER, "A")
+    tilt = SidusAxis(RepeatingFakeSerial(b"$AMRL5000R\r\n"), protocol.TILT_HEADER, "A")
+    pan.read_location_degrees()
+
+    start = time.monotonic()
+    tilt.read_location_degrees()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < MIN_SAME_AXIS_INTERVAL_S / 2
